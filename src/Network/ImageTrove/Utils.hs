@@ -204,5 +204,11 @@ getStableWithNameAndTime nrMinutes dir = do
 
   where
     studyDirName :: FilePath -> String
-    studyDirName = (head . drop 1 . reverse . splitDirectories)
+    studyDirName = (head . reverse . splitDirectories)
 
+
+writeLog' :: String -> IO ()
+writeLog' msg = do
+    now <- show <$> getZonedTime
+    putStrLn (now ++ " :: " ++ msg)
+    return ()

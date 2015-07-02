@@ -154,10 +154,10 @@ createProjectGroup groupMVar linksDir = do
 
 _createProjectGroup groupMVar projectID = do
     case projectID of A.Success projectID' -> do projectResult <- callWorker groupMVar $ "Project " ++ projectID'
-                                                 case projectResult of A.Success _              -> liftIO $ putStrLn $ "Created project group: " ++ projectID'
-                                                                       A.Error   projErr        -> liftIO $ putStrLn $ "Error when creating project group: " ++ projErr
+                                                 case projectResult of A.Success _              -> writeLog $ "Created project group: " ++ projectID'
+                                                                       A.Error   projErr        -> writeLog $ "Error when creating project group: " ++ projErr
                                                  return (projectResult :: A.Result RestGroup)
-                      A.Error   err        -> do liftIO $ putStrLn $ "Error: could not retrieve Project ID from ReferringPhysician field: " ++ err
+                      A.Error   err        -> do writeLog $ "Error: could not retrieve Project ID from ReferringPhysician field: " ++ err
                                                  return $ A.Error err
 
 uploadAllAction opts = do
@@ -193,7 +193,7 @@ anonymizeDicomFile f = do
                                                  , f
                                                  ]
 
-                                      putStrLn $ "anonymizeDicomFile: " ++ show (cmd, opts)
+                                      writeLog' $ "anonymizeDicomFile: " ++ show (cmd, opts)
 
                                       runShellCommand (dropFileName f) cmd opts
 
@@ -225,7 +225,7 @@ anonymizeDicomFile' f = do
                                                  , f
                                                  ]
 
-                                      putStrLn $ "anonymizeDicomFile: " ++ show (cmd, opts)
+                                      writeLog' $ "anonymizeDicomFile: " ++ show (cmd, opts)
 
                                       _runShellCommand (dropFileName f) cmd opts
 
@@ -296,8 +296,8 @@ dostuff opts@(UploaderOptions _ _ _ _ (CmdUploadOne oneOpts)) = do
         hashes = map (hashFiles . fmap dicomFilePath) groups :: [String]
         matches = filter ((==) hash . snd) (zip groups hashes) :: [([DicomFile], String)]
 
-    case matches of [match] -> liftIO $ print match
-                    []      -> liftIO $ putStrLn "Hash does not match any identified experiment."
+    case matches of [match] -> writeLog $ show match
+                    []      -> writeLog $ "Hash does not match any identified experiment."
                     _       -> error "Multiple experiments with the same hash. This is a bug."
 
 dostuff opts@(UploaderOptions _ _ _ _ (CmdUploadAll allOpts)) = do
@@ -309,12 +309,12 @@ dostuff opts@(UploaderOptions _ _ _ _ (CmdUploadFromDicomServer dicomOpts)) = do
                 forever $ do liftIO $ setCurrentDirectory origDir
                              uploadDicomAction opts origDir
                              let sleepMinutes = uploadFromDicomSleepMinutes dicomOpts
-                             liftIO $ printf "Sleeping for %d minutes...\n" sleepMinutes
+                             writeLog $ printf "Sleeping for %d minutes...\n" sleepMinutes
                              liftIO $ threadDelay $ sleepMinutes * (60 * 10^6)
         else do origDir <- liftIO getCurrentDirectory
                 uploadDicomAction opts origDir
 
-    liftIO $ print "Exiting dostuff at top level."
+    writeLog "Exiting dostuff at top level."
 
 dostuff opts@(UploaderOptions _ _ _ _ (CmdShowNewExperiments _)) = showNewAction opts
 
@@ -622,7 +622,7 @@ groupBySeries dfiles = do
 
     let uniqueUIDs = (S.toList . S.fromList) seriesUIDs
         result = Prelude.map (fmap snd) [ Prelude.filter (\(uid, _) -> uid == suid) (zip seriesUIDs dfiles) | suid <- uniqueUIDs ] -- inefficient...?
-    putStrLn $ "groupBySeries: found " ++ show (length result) ++ " different series in this study."
+    writeLog' $ "groupBySeries: found " ++ show (length result) ++ " different series in this study."
     return $ Right result
 
 copyToTempDir :: [DFile] -> ReaderT MyTardisConfig IO (A.Result FilePath)
@@ -675,7 +675,7 @@ studyFiles (sdir, dirname, mtime) = do
     files <- getDicomFilesInDirectory ".IMA" sdir
     suids <- withPool nrWorkersGlobal $ \pool -> parallel pool (map readSeriesDesc files)
 
-    putStrLn $ "studyFiles: found " ++ show (length files) ++ " files in " ++ sdir
+    writeLog' $ "studyFiles: found " ++ show (length files) ++ " files in " ++ sdir
 
     return $ (sdir, dirname, mtime, zip files suids)
 
@@ -735,27 +735,26 @@ processSeries acidDir iconfig mvars dcmtkSeries = do
 
     let dfiles = series
 
-    liftIO $ putStrLn $ "processSeries: got series of " ++ show (length dfiles) ++ " files."
+    writeLog $ "processSeries: got series of " ++ show (length dfiles) ++ " files."
 
     let MVars acidMVar experimentMVar datasetMVar groupMVar = mvars
     -- h <- liftIO $ getStudyDirName $ map fst dfiles
-    -- liftIO $ putStrLn $ "Series has " ++ (show $ length dfiles) ++ " files with hashes: " ++ show h
+    -- writeLog $ "Series has " ++ (show $ length dfiles) ++ " files with hashes: " ++ show h
 
     let f = fst <$> headMay dfiles
     m <- liftIO $ traverse readDicomMetadata f
 
     case m of
-        Nothing       -> liftIO $ putStrLn "Error: no files in series."
-        Just (Left e) -> do liftIO $ putStrLn $ "Error: Could not read DICOM metadata: " ++ e
-                            liftIO $ putStrLn $ "Error: could not read DICOM metadata: " ++ e ++ " from file: " ++ show f
+        Nothing       -> throwM $ OtherImagetroveException $ "Error: no files in series."
+        Just (Left e) -> throwM $ OtherImagetroveException $ "Error: could not read DICOM metadata: " ++ e ++ " from file: " ++ show f
 
         Just (Right m') -> do let projectID = caiProjectID [m']
-                              liftIO $ putStrLn $ "Found project ID: " ++ show projectID
+                              writeLog $ "Found project ID: " ++ show projectID
 
                               projectGroup <- _createProjectGroup groupMVar projectID
                               case projectGroup of
-                                A.Error e -> liftIO $ putStrLn $ "Could not create project group " ++ show projectID ++ " due to error: " ++ e
-                                A.Success _ -> do liftIO $ putStrLn $ "Created project group: " ++ show projectID
+                                A.Error e -> throwM $ OtherImagetroveException $ "Could not create project group " ++ show projectID ++ " due to error: " ++ e
+                                A.Success _ -> do writeLog $ "Created project group: " ++ show projectID
 
                                                   -- Create resources (temp directories, etc) for the actual
                                                   -- processing of the series. This is not done in a tidy way,
@@ -770,12 +769,12 @@ processSeries acidDir iconfig mvars dcmtkSeries = do
 
                                                   (finishSeries acidDir mvars iconfig resources dcmtkSeries) `finally` (liftIO $ removeRecursiveSafely tempDir)
 
-                                                  liftIO $ print ()
+                                                  writeLog $ show ()
 
 copyDicoms :: [FilePath] -> FilePath -> IO [FilePath]
 copyDicoms dfiles targetDir = do
     forM_ (zip dfiles targetFiles) (\(old, new) -> do when (old == new) (error $ "Trying to copy file to itself: " ++ old)
-                                                      putStrLn $ old ++ " ==> " ++ new
+                                                      writeLog' $ old ++ " ==> " ++ new
                                                       copyFile old new)
     return targetFiles
   where
@@ -833,32 +832,28 @@ finishSeries acidDir mvars iconfig resources dcmtkSeries = do
     when (length _patientDir /= 1) (error $ "Found multiple patient directories in " ++ tempDir ++ " ==> " ++ show _patientDir)
     let [patientDir] = _patientDir
 
-    liftIO $ putStrLn $ "Running: " ++ show (tempDir, "zip", ["-r", zipFileName, patientDir])
+    writeLog $ "Running: " ++ show (tempDir, "zip", ["-r", zipFileName, patientDir])
     _ <- liftIO $ _runShellCommand tempDir "zip" ["-r", zipFileName, patientDir]
 
     let zipFileFullName = tempDir </> zipFileName
 
     -- stage 4: make minc
-    _mincFiles <- liftIO $ dicomToMinc tempDir dfiles -- IO (Either String (FilePath, [FilePath])) -- FIXME stupid pattern match
-
-    mincFiles <- case _mincFiles of
-                    Left e -> throwM $ OtherImagetroveException e
-                    Right _mincFiles' -> return _mincFiles'
+    mincFiles <- liftIO $ dicomToMinc tempDir dfiles :: ReaderT MyTardisConfig IO (Either String (FilePath, [FilePath]))
 
     -- stage 4a: rename minc files
-    renamedMincFiles <- liftIO $ renameMinc dfiles mincFiles
+    renamedMincFiles <- liftIO $ traverse (renameMinc dfiles) mincFiles                     :: ReaderT MyTardisConfig IO (Either String [FilePath])
 
     -- stage 4a(i): MINC to MINC2
     tmp <- mytardisTmp <$> ask
-    toMinc2Results <- liftIO $ forM renamedMincFiles (mncToMnc2 tmp) -- FIXME check results
+    toMinc2Results <- liftIO $ (traverse . traverse) (mncToMnc2 tmp) renamedMincFiles       :: ReaderT MyTardisConfig IO (Either String [Either String FilePath])
 
     -- stage 4b: minc thumbnails
-    mincThumbnails <- liftIO $ forM renamedMincFiles createMincThumbnail
+    mincThumbnails <- liftIO $ (traverse . traverse) createMincThumbnail renamedMincFiles   :: ReaderT MyTardisConfig IO (Either String [Either String FilePath])
 
     -- stage 5: make nifti
-    niftis <- liftIO $ forM renamedMincFiles createNifti
+    niftis <- liftIO $ (traverse . traverse) createNifti renamedMincFiles                   :: ReaderT MyTardisConfig IO (Either String [Either String FilePath])
 
-    let files = renamedMincFiles
+    -- let files = renamedMincFiles
 
     -- stage 6: make experiment/dataset
     schemas <- createSchemasIfMissing (schemaExperiment, schemaDataset, schemaFile)
@@ -899,26 +894,44 @@ finishSeries acidDir mvars iconfig resources dcmtkSeries = do
                                                                push zipFileFullName
 
                                                                -- MINC files:
-                                                               forM_ renamedMincFiles push
+                                                               -- forM_ renamedMincFiles push
+                                                               (traverse . traverse) push renamedMincFiles
 
                                                                -- MINC thumbnails:
-                                                               forM_ (rights mincThumbnails) push
+                                                               -- forM_ (rights mincThumbnails) push
+                                                               (traverse . traverse . traverse) push mincThumbnails
 
                                                                -- Nifti files:
-                                                               forM_ (rights niftis) push
+                                                               -- forM_ (rights niftis) push
+                                                               (traverse . traverse . traverse) push niftis
 
-                                                               -- FIXME produce warnings about lefts of mincThumbnails and niftis
+                                                               printWarnings renamedMincFiles mincThumbnails niftis
 
-                                                               liftIO $ do callWorkerIO acidMVar (AcidUpdateMap acidDir studyDirName studyLastUpdate)
-                                                                           putStrLn $ "Updated last update."
-
-                                                               liftIO $ print "done"
+                                                               writeLog $ "Finished processing series ==> " ++ (head dfiles)
 
         (A.Error expError, _, _)            -> throwM $ OtherImagetroveException $ "Error when creating experiment: " ++ expError
         (A.Success _, A.Error dsError, _)   -> throwM $ OtherImagetroveException $ "Error when creating dataset: " ++ dsError
         (A.Success _, A.Success _, Nothing) -> throwM $ OtherImagetroveException $ "Error when creating extracting file metadata. No files in DICOM group!"
 
-    liftIO $ print "finishSeries: done."
+    writeLog $ "finishSeries: done ==> " ++ show oneFile
+
+printWarnings :: Either [Char] [FilePath] -> Either [Char] [Either String FilePath] -> Either [Char] [Either String FilePath] -> ReaderT MyTardisConfig IO ()
+printWarnings renamedMincFiles mincThumbnails niftis = do
+    case renamedMincFiles of
+        Left err -> writeLog $ "Error when converting to MINC: " ++ err
+        Right _  -> return ()
+
+    case mincThumbnails of
+        Left err -> writeLog $ "Error when producing thumbnails of MINC files: " ++ err
+        Right x  -> case lefts x of
+                        []   -> return ()
+                        errs -> writeLog $ "Individual errors when converting MINC to PNG: " ++ show errs
+
+    case niftis of
+        Left err -> writeLog $ "Error when producing Niftis: " ++ err
+        Right x  -> case lefts x of
+                        []   -> return ()
+                        errs -> writeLog $ "Individual errors when producing Niftis: " ++ show errs
 
 pushFile schemaFile identifyDatasetFile d filemetadata f = do
     dsf <- uploadFileBasic schemaFile identifyDatasetFile d f filemetadata
@@ -929,7 +942,7 @@ pushFile schemaFile identifyDatasetFile d filemetadata f = do
 
 renameMinc dfiles (tempDir, _mincFiles) = do
     m@(pid, studyDesc, seriesNr, seriesDesc) <- getBasicMetadata (head dfiles)
-    putStrLn $ "renameMinc: metadata: " ++ show m
+    writeLog' $ "renameMinc: metadata: " ++ show m
 
     -- let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_" ++ f')
     let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ f')
@@ -941,7 +954,7 @@ renameMinc dfiles (tempDir, _mincFiles) = do
 
     liftIO $ forM_ _mincFiles $ \f -> do let old = f
                                              new = myRenamer old
-                                         putStrLn $ "Renaming <" ++ old ++ "> to <" ++ new ++ ">"
+                                         writeLog' $ "Renaming <" ++ old ++ "> to <" ++ new ++ ">"
                                          rename old new
     return $ map myRenamer _mincFiles
 
@@ -983,7 +996,7 @@ processStudy iconfigs mvars fp s@(studyDir, studyDirName, studyLastUpdate) = do
     iconfig <- liftIO $ chooseConfig iconfigs s
 
     if (isStudyNewer m s)
-        then do liftIO $ print "done"
+        then do writeLog $ "Processing study: " ++ studyDir
                 sf <- liftIO $ studyFiles s
                 -- sf <- liftIO $ withPool 5 $ \pool -> parallel pool (map studyFiles s)
 
@@ -994,9 +1007,20 @@ processStudy iconfigs mvars fp s@(studyDir, studyDirName, studyLastUpdate) = do
                 let seriesTasks = map (\s -> runReaderT (processSeries fp iconfig mvars s) conf) series
 
                 results <- liftIO $ withPool nrWorkersGlobal $ \pool -> parallelE_ pool seriesTasks
-                liftIO $ forM_ results print -- FIXME tidy up
-                return results -- ... or print this stuff one level up
-        else return []
+                liftIO $ forM_ results (\r -> writeLog' $ show r) -- FIXME tidy up
+
+                -- If every series successfully uploaded (no exceptions thrown) then we can
+                -- update the value for the study.
+                if all isNothing results
+                    then do writeLog $ "Successfully processed study " ++ studyDir
+                            callWorker acidMVar (AcidUpdateMap fp studyDirName studyLastUpdate)
+                            writeLog $ "Updated last update."
+                    else writeLog $ "Errors while processing study " ++ studyDir ++ " " ++ show results
+
+                return results
+
+        else do writeLog $ "Ignoring older study directory " ++ studyDir
+                return []
 
 runDCMTK configFileName iconfigs topDir = do
     liftIO $ hSetBuffering stdout LineBuffering
@@ -1017,22 +1041,22 @@ runDCMTK configFileName iconfigs topDir = do
 
     let mvars = MVars acidMVar experimentMVar datasetMVar groupMVar
 
-    asyncAcidWorker             <- liftIO $ async $ acidWorker acidMVar
+    asyncAcidWorker             <- liftIO $ async $ acidWorker fp acidMVar
     asyncWorkerCreateExperiment <- liftIO $ async $ runReaderT (workerCreateExperiment experimentMVar) conf
     asyncWorkerCreateDataset    <- liftIO $ async $ runReaderT (workerCreateDataset    datasetMVar)    conf
     asyncWorkerCreateGroup      <- liftIO $ async $ runReaderT (workerCreateGroup      groupMVar)      conf
 
-    liftIO $ putStrLn $ "runDCMTK..."
+    writeLog $ "runDCMTK..."
 
     AcidMap currentMap <- callWorker acidMVar (AcidLoadMap fp)
 
     s  <- liftIO $ studyDirs topDir
-    liftIO $ putStrLn $ "runDCMTK found " ++ (show $ length s) ++ " study directories."
+    writeLog $ "runDCMTK found " ++ (show $ length s) ++ " study directories."
 
     let k = 3
 
     forM_ (splitEvery k s) $ \chunk -> do let tasks = map (\c -> runReaderT (processStudy iconfigs mvars fp c) conf) chunk
-                                          liftIO $ putStrLn $ "Spawning " ++ show k ++ " jobs..."
+                                          writeLog $ "Spawning " ++ show k ++ " jobs..."
                                           liftIO $ withPool k $ \pool -> parallel pool tasks
 
     pollExperiment <- liftIO $ poll asyncWorkerCreateExperiment
@@ -1040,12 +1064,12 @@ runDCMTK configFileName iconfigs topDir = do
     pollGroup      <- liftIO $ poll asyncWorkerCreateGroup
     pollAcid       <- liftIO $ poll asyncAcidWorker
 
-    liftIO $ putStrLn $ "poll pollExperiment: " ++ show pollExperiment
-    liftIO $ putStrLn $ "poll pollDataset: " ++ show pollDataset
-    liftIO $ putStrLn $ "poll pollGroup: " ++ show (pollGroup :: Maybe (Either SomeException ()))
-    liftIO $ putStrLn $ "poll pollAcid: " ++ show (pollAcid :: Maybe (Either SomeException ()))
+    writeLog $ "poll pollExperiment: " ++ show pollExperiment
+    writeLog $ "poll pollDataset: " ++ show pollDataset
+    writeLog $ "poll pollGroup: " ++ show (pollGroup :: Maybe (Either SomeException ()))
+    writeLog $ "poll pollAcid: " ++ show (pollAcid :: Maybe (Either SomeException ()))
 
-    liftIO $ print "runDCMTK: exiting"
+    writeLog $ "runDCMTK: exiting"
 
 data Resources = Resources {
     resourceTemp        :: FilePath     -- For processing a single series, a top level temp directory.

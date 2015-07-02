@@ -56,45 +56,20 @@ getMapInternal = do
 
 $(makeAcidic ''KeyValue ['insertKey, 'deleteKey, 'lookupKey, 'getMapInternal])
 
-loadMap :: FilePath -> IO (Map.Map Key Value)
-loadMap fp = do
-    catchAll (loadMap' fp)
-             (\(e :: SomeException) -> do print $ "error: exception in loadMap! " ++ show e
-                                          r <- randomIO :: IO Float
-                                          threadDelay $ ceiling $ ((0.1 + 5*r) * 10^6)
-                                          loadMap fp)
-  where
-    loadMap' fp = do
-        acid <- openLocalStateFrom fp (KeyValue Map.empty)
-        m <- query acid GetMapInternal
-        closeAcidState acid
-        return m
+loadMap :: AcidState (EventState GetMapInternal) -> FilePath -> IO (Map.Map Key Value)
+loadMap acid fp = do
+    m <- query acid GetMapInternal
+    return m
 
-updateLastUpdate :: FilePath -> Key -> ZonedTime -> IO ()
-updateLastUpdate fp x lastUpdate = do
-    catchAll (updateLastUpdate' fp x lastUpdate)
-             (\(e :: SomeException) -> do print $ "error: exception in updateLastUpdate! " ++ show e
-                                          r <- randomIO :: IO Float
-                                          threadDelay $ ceiling $ ((0.1 + 5*r) * 10^6)
-                                          updateLastUpdate fp x lastUpdate)
-  where
-    updateLastUpdate' fp x lastUpdate = do
-        acid <- openLocalStateFrom fp (KeyValue Map.empty)
-        _ <- update acid (InsertKey x lastUpdate)
-        closeAcidState acid
+updateLastUpdate :: AcidState (EventState GetMapInternal) -> FilePath -> Key -> ZonedTime -> IO ()
+updateLastUpdate acid fp x lastUpdate = do
+    _ <- update acid (InsertKey x lastUpdate)
+    return ()
 
-deleteLastUpdate :: FilePath -> Key -> IO ()
-deleteLastUpdate fp x = do
-    catchAll (deleteLastUpdate' fp x)
-             (\(e :: SomeException) -> do print $ "error: exception in deleteLastUpdate! " ++ show e
-                                          r <- randomIO :: IO Float
-                                          threadDelay $ ceiling $ ((0.1 + 5*r) * 10^6)
-                                          deleteLastUpdate fp x)
-  where
-    deleteLastUpdate' fp x = do
-        acid <- openLocalStateFrom fp (KeyValue Map.empty)
-        _ <- update acid (DeleteKey x)
-        closeAcidState acid
+deleteLastUpdate :: AcidState (EventState GetMapInternal) -> FilePath -> Key -> IO ()
+deleteLastUpdate acid fp x = do
+    _ <- update acid (DeleteKey x)
+    return ()
 
 data AcidAction = AcidLoadMap FilePath
                 | AcidUpdateMap FilePath Key ZonedTime
@@ -104,18 +79,19 @@ data AcidOutput = AcidMap (Map.Map Key Value)
                 | AcidNothing
                 deriving Show
 
-acidWorker m = forever $ do
-    r <- randomIO :: IO Float
-    threadDelay $ ceiling $ ((0.1 + 5*r) * 10^6)
+acidWorker fp m = do
+    acid <- openLocalStateFrom fp (KeyValue Map.empty)
+    (action acid) `finally` (closeAcidState acid)
+  where
+    action acid = forever $ do
+                (action, o) <- takeMVar m
 
-    (action, o) <- takeMVar m
+                case action of
+                    AcidLoadMap fp -> do m <- loadMap acid fp
+                                         putMVar o (AcidMap m)
 
-    case action of
-        AcidLoadMap fp -> do m <- loadMap fp
-                             putMVar o (AcidMap m)
-
-        AcidUpdateMap fp x lastUpdate -> do updateLastUpdate fp x lastUpdate
-                                            putMVar o AcidNothing
+                    AcidUpdateMap fp x lastUpdate -> do updateLastUpdate acid fp x lastUpdate
+                                                        putMVar o AcidNothing
 
 -- FIXME Copied from API.hs
 callWorkerIO :: MVar (t, MVar b) -> t -> IO b
@@ -125,6 +101,7 @@ callWorkerIO m x = do
     o' <- takeMVar o
     return o'
 
+{-
 -- Stuff to turn into a command line option
 _foo fp = do
     m <- loadMap fp
@@ -143,3 +120,5 @@ _foo fp = do
     -- *Network.ImageTrove.Acid> forM_ (map (\(z,_) -> z) x) (deleteLastUpdate "state_sample_config_files_CAI_7T.conf")
 
     print ()
+-}
+

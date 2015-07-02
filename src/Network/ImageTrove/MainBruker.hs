@@ -214,7 +214,8 @@ tarBrukerDirectory tempDir dir = do
         Left err    -> return $ Left $ "Error while creating tarball of " ++ dir ++ ": " ++ err
         Right _     -> return $ Right tarball
 
-pvconvScript = "/data/home/uqchamal/perl5/bin/pvconv.pl" -- FIXME make parameter? Why is the path broken?
+-- pvconvScript = "/data/home/uqchamal/perl5/bin/pvconv.pl" -- FIXME make parameter? Why is the path broken?
+pvconvScript = "/home/imagetrove/perl5/bin/pvconv.pl" -- FIXME make parameter? Why is the path broken?
 
 isNumber :: String -> Bool
 isNumber = all isDigit
