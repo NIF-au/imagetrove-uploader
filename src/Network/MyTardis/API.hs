@@ -69,11 +69,11 @@ data MyTardisConfig = MyTardisConfig
     , myTardisPass       :: String -- ^ Password.
     , myTardisWreqOpts   :: Network.Wreq.Options -- ^ Options for Wreq.
     , imageTroveLogFile  :: Maybe Handle
-    , orthancHost        :: String -- ^ URL to Orthanc web service, e.g. \"http://10.0.0.10:8042\"
     , mytardisDir        :: String -- ^ Path to MyTARDIS storage directory, e.g. \"/imagetrove\"
     , mytardisDebug      :: Bool   -- ^ If set to "True" then dicom conversion directories are not removed.
     , mytardisTmp        :: FilePath -- ^ Directory for temporary files. Defaults to \"/tmp\".
     , mytardisApiPrefix  :: String -- ^ Prefix for API URLs, e.g. use \"imagetrove_\" to get \"/imagetrove_experiment\" instead of \"/experiment\".
+    , mytardisDCMTkDir   :: Maybe FilePath -- ^ DCMTK incoming directory.
     }
     deriving Show
 
@@ -81,13 +81,13 @@ data MyTardisConfig = MyTardisConfig
 defaultMyTardisOptions :: String -- ^ MyTARDIS host URL.
                        -> String -- ^ Username
                        -> String -- ^ Password
-                       -> String -- ^ Orthanc host URL.
                        -> String -- ^ MyTARDIS storage directory.
                        -> Bool   -- ^ Debug mode.
                        -> FilePath -- ^ Temporary directory.
                        -> String -- ^ API URL prefix.
+                       -> Maybe FilePath -- ^ DCMTK incoming directory.
                        -> MyTardisConfig
-defaultMyTardisOptions host user pass orthHost mytardisDir debug tmp apiPrefix = MyTardisConfig host "/api/v1" user pass opts Nothing orthHost mytardisDir debug tmp apiPrefix
+defaultMyTardisOptions host user pass mytardisDir debug tmp apiPrefix dcmtkDir = MyTardisConfig host "/api/v1" user pass opts Nothing mytardisDir debug tmp apiPrefix dcmtkDir
   where
     opts = if "https" `isPrefixOf` host then optsHTTPS else optsHTTP
     optsHTTP  = defaults & manager .~ Left (defaultManagerSettings { managerResponseTimeout = Just 3000000000 } )
@@ -648,7 +648,7 @@ copyFileToStore
 copyFileToStore filepath dsf = do
     writeLog $ "copyFileToStore: " ++ show (filepath, dsf)
 
-    MyTardisConfig _ _ _ _ _ _ _ mytardisDir _ _ _ <- ask
+    (mDir :: FilePath) <- mytardisDir <$> ask
 
     results <- forM (dsfReplicas dsf) $ \r -> do
         let filePrefix = "file://" :: String
@@ -656,7 +656,7 @@ copyFileToStore filepath dsf = do
         writeLog $ "copyFileToStore: replica: " ++ show r
 
         if (not $ replicaVerified r)
-            then do let targetFilePath = mytardisDir </> target
+            then do let targetFilePath = mDir </> target
                         targetDir      = dropFileName targetFilePath
                     writeLog $ "copyFileToStore: found unverified target: " ++ targetFilePath
                     liftIO $ catch (do createDirectoryIfMissing True targetDir

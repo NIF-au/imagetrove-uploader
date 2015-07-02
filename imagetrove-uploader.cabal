@@ -24,7 +24,6 @@ library
                    , Network.MyTardis.Instances
                    , Network.MyTardis.Types
                    , Network.MyTardis.RestTypes
-                   , Network.Orthanc.API
   -- other-modules:
   -- other-extensions:
   ghc-options:       -threaded

@@ -39,7 +39,6 @@ import Network.ImageTrove.Utils
 import Network.MyTardis.API
 import Network.MyTardis.RestTypes
 import Network.MyTardis.Types
-import Network.Orthanc.API
 
 import System.IO
 
@@ -232,187 +231,6 @@ anonymizeDicomFile' f = do
 
 uploadDicomAction opts origDir = do
     liftIO $ print "uploadDicomAction: entering."
-{-
-    debug <- mytardisDebug <$> ask
-
-    cwd <- liftIO getCurrentDirectory
-
-    let slashToUnderscore = map (\c -> if c == '/' then '_' else c)
-
-    let fp = cwd </> (slashToUnderscore $ "state_" ++ optConfigFile opts)
-    liftIO $ createDirectoryIfMissing True fp
-
-    conf <- ask
-
-    acidMVar       <- liftIO $ newEmptyMVar
-    experimentMVar <- liftIO $ newEmptyMVar
-    datasetMVar    <- liftIO $ newEmptyMVar
-    groupMVar      <- liftIO $ newEmptyMVar
-
-    -- FIXME Would be nicer if we could avoid the runReaderT stuff here?
-    asyncAcidWorker             <- liftIO $ async $ acidWorker acidMVar
-    asyncWorkerCreateExperiment <- liftIO $ async $ runReaderT (workerCreateExperiment experimentMVar) conf
-    asyncWorkerCreateDataset    <- liftIO $ async $ runReaderT (workerCreateDataset    datasetMVar)    conf
-    asyncWorkerCreateGroup      <- liftIO $ async $ runReaderT (workerCreateGroup      groupMVar)      conf
-
-    instrumentConfigs <- liftIO $ readInstrumentConfigs (optConfigFile opts)
-    tasks <- concat <$> forM instrumentConfigs (makeTasks conf debug fp acidMVar experimentMVar datasetMVar groupMVar)
-
-    liftIO $ putStrLn $ "uploadDicomAction: found " ++ show (length tasks) ++ " tasks to process."
-
-    -- FIXME Add an ID to the config so that logging has a task ID.
-    liftIO $ withPool 15 $ \pool -> parallel_ pool tasks
-
-    pollExperiment <- liftIO $ poll asyncWorkerCreateExperiment
-    pollDataset    <- liftIO $ poll asyncWorkerCreateDataset
-    pollGroup      <- liftIO $ poll asyncWorkerCreateGroup
-    pollAcid       <- liftIO $ poll asyncAcidWorker
-
-    liftIO $ putStrLn $ "poll pollExperiment: " ++ show pollExperiment
-    liftIO $ putStrLn $ "poll pollDataset: " ++ show pollDataset
-    liftIO $ putStrLn $ "poll pollGroup: " ++ show (pollGroup :: Maybe (Either SomeException ()))
-    liftIO $ putStrLn $ "poll pollAcid: " ++ show (pollAcid :: Maybe (Either SomeException ()))
-
-    liftIO $ print "uploadDicomAction: exiting."
--}
-
-
-
-{-
-makeTasks conf debug fp acidMVar experimentMVar datasetMVar groupMVar iconfig = do
-    let ( instrumentName, instrumentFilters, instrumentFiltersT, instrumentMetadataFields, experimentFields, datasetFields, schemaExperiment, schemaDataset, schemaDicomFile, defaultInstitutionName, defaultInstitutionalDepartmentName, defaultInstitutionalAddress, defaultOperators) = iconfig
-
-    liftIO $ putStrLn ""
-    liftIO $ putStrLn ""
-    liftIO $ putStrLn $ "Instrument: " ++ instrumentName
-    liftIO $ putStrLn ""
-
-    _ogroups <- getOrthancInstrumentGroups instrumentFiltersT <$> majorOrthancGroups
-
-    -- Timezone:
-    ZonedTime _ tz <- liftIO getZonedTime
-
-    case _ogroups of Left err -> undefined
-                     Right ogroups -> do
-                                         let -- Times that available *series* have been updated:
-                                             updatedTimes = map (\(_, _, s, _, _) -> (getSeriesLastUpdate tz s)) ogroups :: [Maybe ZonedTime]
-
-                                             -- Hash of each:
-                                             hashes = map (\(patient, study, series, _, _) -> getHashes (patient, study, series)) ogroups
-
-                                             -- Together:
-                                             hashAndLastUpdated = zip hashes updatedTimes
-
-                                         liftIO $ putStrLn $ "|hashAndLastUpdated| = " ++ show (length hashAndLastUpdated)
-
-                                         recentOgroups <- liftIO $ patientsToProcess acidMVar fp ogroups hashAndLastUpdated
-
-                                         liftIO $ putStrLn $ "Experiments that are recent enough for us to process: " ++ show recentOgroups
-                                         liftIO $ getZonedTime >>= print
-
-                                         let fn = \og -> runReaderT (blaaah acidMVar experimentMVar datasetMVar groupMVar debug tz fp schemaExperiment schemaDataset schemaDicomFile defaultInstitutionName defaultInstitutionalDepartmentName defaultInstitutionalAddress defaultOperators instrumentFilters instrumentMetadataFields experimentFields datasetFields og) conf
-
-                                         return $ map fn recentOgroups
-
-blaaah acidMVar experimentMVar datasetMVar groupMVar debug tz fp schemaExperiment schemaDataset schemaDicomFile defaultInstitutionName defaultInstitutionalDepartmentName defaultInstitutionalAddress defaultOperators instrumentFilters instrumentMetadataFields experimentFields datasetFields (patient, study, series, oneInstance, tags) = do
-    here <- liftIO getZonedTime
-    liftIO $ print ("blaaah", "entering at time", here, opID patient, ostudyID study, oseriesID series)
-
-    -- Before we get the archive, check if the Referring Physician is there so that we can get a project ID.
-    let projectID = join $ tagValue <$> otagReferringPhysicianName tags
-    case is5digits <$> projectID of
-        Nothing    -> liftIO $ putStrLn $ "Error: could not read Referring Physician Name from " ++ opID patient ++ " " ++ ostudyID study ++ " " ++ oseriesID series
-        Just False -> liftIO $ putStrLn $ "Error: invalid project ID: \"" ++ (fromJust projectID) ++ "\" from " ++ opID patient ++ " " ++ ostudyID study ++ " " ++ oseriesID series
-        Just True  -> blaaah' acidMVar experimentMVar datasetMVar groupMVar debug tz fp schemaExperiment schemaDataset schemaDicomFile defaultInstitutionName defaultInstitutionalDepartmentName defaultInstitutionalAddress defaultOperators instrumentFilters instrumentMetadataFields experimentFields datasetFields (patient, study, series, oneInstance, tags)
-
-blaaah' acidMVar experimentMVar datasetMVar groupMVar debug tz fp schemaExperiment schemaDataset schemaDicomFile defaultInstitutionName defaultInstitutionalDepartmentName defaultInstitutionalAddress defaultOperators instrumentFilters instrumentMetadataFields experimentFields datasetFields (patient, study, series, oneInstance, tags) = do
-
-    liftIO $ getZonedTime >>= print
-    liftIO $ putStrLn $ "getting series archive.... " ++ oseriesID series
-    archive <- getSeriesArchive $ oseriesID series
-    liftIO $ putStrLn $ "finished getting series archive.... " ++ oseriesID series
-
-    case archive of
-        Left e -> liftIO $ putStrLn $ "Error: could not get series archive " ++ oseriesID series ++ "; failed with error: " ++ e
-
-        Right (tempDir, zipfile) -> do
-            liftIO $ getZonedTime >>= print
-            liftIO $ putStrLn $ "got series archive."
-
-            liftIO $ print (tempDir, zipfile)
-
-            tmp <- mytardisTmp <$> ask
-            linksDir <- liftIO $ unpackArchive tmp tempDir zipfile
-            case linksDir of
-                Left linksErr -> liftIO $ putStrLn $ "blaaah: error unpacking archive: " ++ linksErr
-                Right linksDir' -> do
-                                      liftIO $ getZonedTime >>= print
-                                      liftIO $ putStrLn $ "dostuff: linksDir: " ++ linksDir'
-
-                                      createProjectGroup groupMVar linksDir'
-
-                                      rawDicomFiles <- liftIO $ getDicomFilesInDirectory ".dcm" linksDir'
-                                      anonymizationResults <- liftIO $ forM rawDicomFiles anonymizeDicomFile
-
-                                      if length (lefts anonymizationResults) > 0
-                                         then liftIO $ putStrLn $ "Errors while anonymizing DICOM files: " ++ show (lefts anonymizationResults)
-                                         else do files <- liftIO $ rights <$> (getDicomFilesInDirectory ".dcm" linksDir' >>= mapM readDicomMetadata)
-
-                                                 liftIO $ getZonedTime >>= print
-                                                 liftIO $ putStrLn $ "calling uploadDicomAsMincOneGroup..."
-                                                 oneGroupResult <- uploadDicomAsMincOneGroup
-                                                     experimentMVar
-                                                     datasetMVar
-                                                     files
-                                                     instrumentFilters
-                                                     instrumentMetadataFields
-                                                     experimentFields
-                                                     datasetFields
-                                                     identifyExperiment
-                                                     identifyDataset
-                                                     identifyDatasetFile
-                                                     linksDir'
-                                                     ( schemaExperiment
-                                                     , schemaDataset
-                                                     , schemaDicomFile
-                                                     , defaultInstitutionName
-                                                     , defaultInstitutionalDepartmentName
-                                                     , defaultInstitutionalAddress
-                                                     , defaultOperators)
-
-                                                 let schemaFile = schemaDicomFile -- FIXME
-
-                                                 case oneGroupResult of
-                                                     (A.Success (A.Success restExperiment, A.Success restDataset)) -> do
-                                                             zipfile' <- uploadFileBasic schemaFile identifyDatasetFile restDataset zipfile [] -- FIXME add some metadata
-
-                                                             case zipfile' of
-                                                                 A.Success zipfile''   -> liftIO $ do putStrLn $ "Successfully uploaded: " ++ show zipfile''
-                                                                                                      putStrLn $ "Deleting temporary directory: " ++ tempDir
-                                                                                                      removeRecursiveSafely tempDir
-                                                                                                      putStrLn $ "Deleting links directory: " ++ linksDir'
-                                                                                                      removeRecursiveSafely linksDir'
-                                                                                                      putStrLn $ "Updating last updated: " ++ show (fp, opID patient, getSeriesLastUpdate tz series)
-
-                                                                                                      -- updateLastUpdate fp (getHashes (patient, study, series)) (getSeriesLastUpdate tz series)
-                                                                                                      _ <- callWorkerIO acidMVar (AcidUpdateMap fp (getHashes (patient, study, series)) (getSeriesLastUpdate tz series))
-                                                                                                      putStrLn $ "Updated last update."
-
-                                                                 A.Error e             -> liftIO $ do putStrLn $ "Error while uploading series archive: " ++ e
-                                                                                                      if debug then do putStrLn $ "Not deleting temporary directory: " ++ tempDir
-                                                                                                                       putStrLn $ "Not deleting links directory: " ++ linksDir'
-                                                                                                               else do putStrLn $ "Deleting temporary directory: " ++ tempDir
-                                                                                                                       removeRecursiveSafely tempDir
-                                                                                                                       putStrLn $ "Deleting links directory: " ++ linksDir'
-                                                                                                                       removeRecursiveSafely linksDir'
-
-                                                             liftIO $ print zipfile'
-                                                     (A.Success (A.Error expError, _              )) -> liftIO $ putStrLn $ "Error when creating experiment: "     ++ expError
-                                                     (A.Success (_,                A.Error dsError)) -> liftIO $ putStrLn $ "Error when creating dataset: "        ++ dsError
-                                                     (A.Error e)                                     -> liftIO $ putStrLn $ "Error in uploadDicomAsMincOneGroup: " ++ e
-    liftIO $ print "blaaah: exiting"
-
--}
 
 dostuff :: UploaderOptions -> ReaderT MyTardisConfig IO ()
 
@@ -514,25 +332,6 @@ showNewAction opts = do
 
     let fp = cwd </> (slashToUnderscore $ "state_" ++ optConfigFile opts)
     liftIO $ createDirectoryIfMissing True fp
-
-__imageTroveMain :: IO ()
-__imageTroveMain = do
-    opts' <- execParser opts
-
-    let host = fromMaybe "http://localhost:8000" $ optHost opts'
-        f    = optConfigFile opts'
-        orthHost = "http://localhost:8043"
-        debug    = optDebug opts'
-
-    mytardisOpts <- getConfig host orthHost f debug
-
-    case mytardisOpts of
-        (Just mytardisOpts') -> runReaderT (dostuff opts') mytardisOpts'
-        _                    -> error $ "Could not read config file: " ++ f
-
-  where
-
-    opts = info (helper <*> pUploaderOptions ) (fullDesc <> header "imagetrove-dicom-uploader - upload DICOM files to a MyTARDIS server" )
 
 caiProjectID'' oneFile = _caiProjectID $ Just oneFile
 
@@ -701,8 +500,8 @@ grabMetadata file = map oops $ concatMap f metadata
 
 
 
-getConfig :: String -> String -> FilePath -> Bool -> IO (Maybe MyTardisConfig)
-getConfig host orthHost f debug = do
+getConfig :: String -> FilePath -> Bool -> IO (Maybe MyTardisConfig)
+getConfig host f debug = do
     cfg <- load [Optional f]
 
     user    <- lookup cfg "user"    :: IO (Maybe String)
@@ -710,8 +509,10 @@ getConfig host orthHost f debug = do
 
     prefix  <- lookup cfg "prefix"  :: IO (Maybe String)
 
-    ohost <- lookup cfg "orthanc_host" :: IO (Maybe String)
-    let ohost' = if isNothing ohost then orthHost else fromJust ohost
+    dcmtkDir <- lookup cfg "dcmtk_dir" :: IO (Maybe String)
+
+    when (isNothing dcmtkDir) $ error $ "Missing dcmtk_dir option in " ++ f
+    let Just dcmtkDir' = dcmtkDir
 
     mytardisDir <- lookup cfg "mytardis_directory" :: IO (Maybe String)
     let mytardisDir' = if isNothing mytardisDir then "/imagetrove" else fromJust mytardisDir
@@ -722,8 +523,8 @@ getConfig host orthHost f debug = do
     hSetBuffering stdin NoBuffering
 
     return $ case (user, pass, prefix) of
-        (Just user', Just pass', Nothing)      -> Just $ defaultMyTardisOptions host user' pass' ohost' mytardisDir' debug tmp' ""
-        (Just user', Just pass', Just prefix') -> Just $ defaultMyTardisOptions host user' pass' ohost' mytardisDir' debug tmp' prefix'
+        (Just user', Just pass', Nothing)      -> Just $ defaultMyTardisOptions host user' pass' mytardisDir' debug tmp' ""      (Just dcmtkDir')
+        (Just user', Just pass', Just prefix') -> Just $ defaultMyTardisOptions host user' pass' mytardisDir' debug tmp' prefix' (Just dcmtkDir')
         _                                      -> Nothing
 
 type InstrumentConfig = (String,
@@ -841,22 +642,23 @@ data MVars = MVars (MVar (AcidAction,              MVar AcidOutput))
 
 imageTroveMain :: IO ()
 imageTroveMain = do
-    let host = "http://localhost:8020" -- "https://imagetrove.cai.uq.edu.au"
-        f    = "debug_3T.conf"
-        orthHost = "http://localhost:8043"
-        debug    = False
+    opts' <- execParser opts
 
-    mytardisOpts <- getConfig host orthHost f debug
+    let host = fromMaybe "http://localhost:8000" $ optHost opts'
+        f    = optConfigFile opts'
+        debug    = optDebug opts'
+
+    mytardisOpts <- getConfig host f debug
 
     case mytardisOpts of
-        (Just mytardisOpts') -> do instrumentConfigs <- readInstrumentConfigs f -- FIXME use opts from cmdline parser (optConfigFile opts)
-                                   -- forM_ instrumentConfigs $ \iconfig -> do let (_, _, instrumentFiltersT, _, _, _, _, _, _, _, _, _, _) = iconfig
-                                   --                                          liftIO $ print instrumentFiltersT
-
-                                   -- forM_ instrumentConfigs $ \iconfig -> runReaderT (runDCMTK f iconfig "/export/nif02/imagetrove/production/dcmtk-store-transfer/") mytardisOpts'
-                                   -- runReaderT (runDCMTK f instrumentConfigs "/export/nif02/imagetrove/production/dcmtk-store-transfer/") mytardisOpts'
-                                   runReaderT (runDCMTK f instrumentConfigs "/export/nif02/uqchamal/mytardis_develop/dcmtk_test_input/") mytardisOpts'
+        (Just mytardisOpts') -> do let Just dcmtkDir = mytardisDCMTkDir mytardisOpts' -- getConfig always gives a Just FilePath here...
+                                   instrumentConfigs <- readInstrumentConfigs f
+                                   runReaderT (runDCMTK f instrumentConfigs dcmtkDir) mytardisOpts'
         _                    -> error $ "Could not read config file: " ++ f
+
+  where
+
+    opts = info (helper <*> pUploaderOptions ) (fullDesc <> header "imagetrove-dicom-uploader - upload DICOM files to a MyTARDIS server" )
 
 nrWorkersGlobal = 20
 

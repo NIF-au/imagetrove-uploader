@@ -32,7 +32,6 @@ import Network.ImageTrove.Utils
 import Network.MyTardis.API
 import Network.MyTardis.RestTypes
 import Network.MyTardis.Types
-import Network.Orthanc.API
 
 import System.Posix.Files
 import System.IO
@@ -111,8 +110,8 @@ getConfig host f debug = do
     hSetBuffering stdin NoBuffering
 
     return $ case (user, pass, prefix) of
-        (Just user', Just pass', Nothing)      -> Just $ defaultMyTardisOptions host user' pass' "http://127.0.0.1:8443" mytardisDir' debug tmp' ""
-        (Just user', Just pass', Just prefix') -> Just $ defaultMyTardisOptions host user' pass' "http://127.0.0.1:8443" mytardisDir' debug tmp' prefix'
+        (Just user', Just pass', Nothing)      -> Just $ defaultMyTardisOptions host user' pass' mytardisDir' debug tmp' ""      Nothing
+        (Just user', Just pass', Just prefix') -> Just $ defaultMyTardisOptions host user' pass' mytardisDir' debug tmp' prefix' Nothing
         _                                      -> Nothing
 
 readInstrumentConfigs
