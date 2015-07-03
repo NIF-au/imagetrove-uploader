@@ -334,7 +334,7 @@ instance FromJSON RestReplica where
         -- v .: "protocol"         <*>
         v .: "resource_uri"     <*>
         -- v .: "stay_remote"      <*>
-        v .: "uri"              <*>
+        v .: "url"              <*>
         v .: "verified"
     parseJSON _          = mzero
 
