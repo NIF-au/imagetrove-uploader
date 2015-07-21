@@ -297,6 +297,7 @@ data DicomFile = DicomFile
 data DicomException = DicomMissingSeriesInstanceUID FilePath
                     | ShellError String
                     | DicomMissingSeriesDescription FilePath
+                    | DicomMissingSeriesNumber      FilePath
     deriving (Show, Typeable)
 
 instance Exception DicomException
@@ -331,6 +332,17 @@ readSeriesDesc f = do
                                       Just seriesDesc''' -> return seriesDesc'''
                                       _                  -> throwM $ DicomMissingSeriesDescription f
         _                                  -> throwM $ DicomMissingSeriesDescription f
+
+readSeriesNr :: FilePath -> IO String
+readSeriesNr f = do
+    seriesNr <- runShellCommand (dropFileName f) "dcmdump" ["-s", "+P", "0020,0011", f]
+
+    case seriesNr of
+        Right seriesNr' -> do let seriesNr'' = unescapeEntities <$> parseSingleMatch pSeriesNumber seriesNr'
+                              case seriesNr'' of
+                                      Just seriesNr''' -> return seriesNr'''
+                                      _                  -> throwM $ DicomMissingSeriesNumber f
+        _               -> throwM $ DicomMissingSeriesNumber f
 
 readDicomMetadata :: FilePath -> IO (Either String DicomFile)
 readDicomMetadata fileName = do
