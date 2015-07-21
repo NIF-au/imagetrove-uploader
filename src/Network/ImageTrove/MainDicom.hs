@@ -727,7 +727,7 @@ genZipFileName ((d, _):_) = do
     (patientID, studyDesc, seriesNr, seriesDesc) <- getBasicMetadata d
     -- return $ (tidyName $ patientID ++ "_" ++ studyDesc ++ "_" ++ (seriesDesc ++ seriesNr)) ++ ".zip"
     -- return $ (tidyName $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc) ++ ".zip"
-    return $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_DICOM.zip"
+    return $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_DICOM.zip"
 
 processSeries :: String -> InstrumentConfig -> MVars -> DCMTKSeries -> MyTardisIO ()
 processSeries acidDir iconfig mvars dcmtkSeries = do
@@ -945,7 +945,7 @@ renameMinc dfiles (tempDir, _mincFiles) = do
     writeLog' $ "renameMinc: metadata: " ++ show m
 
     -- let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_" ++ f')
-    let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ f')
+    let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_" ++ f')
            where base = dropFileName f
                  (originalMincFile:dirName:_) = reverse $ splitPath f
                  f' = drop (length dirName - 1) originalMincFile
