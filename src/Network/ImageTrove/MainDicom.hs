@@ -670,32 +670,29 @@ studyDirs dir = getStableWithNameAndTime 5 dir
 
 -- studyFiles :: DC.Conduit (FilePath, String, UTCTime) MyTardisIO (FilePath, String, UTCTime, [(DicomFilePath, String)])
 -- studyFiles = CL.mapM $ \(sdir, dirname, mtime) -> liftIO $ do
-studyFiles :: (FilePath, String, ZonedTime) -> IO (FilePath, String, ZonedTime, Series)
+studyFiles :: (FilePath, String, ZonedTime) -> IO (FilePath, String, ZonedTime, [(FilePath, String)])
 studyFiles (sdir, dirname, mtime) = do
     files <- getDicomFilesInDirectory ".IMA" sdir
     suids <- withPool nrWorkersGlobal $ \pool -> parallel pool (map readSeriesDesc files)
-    snrs  <- withPool nrWorkersGlobal $ \pool -> parallel pool (map readSeriesNr   files)
 
     writeLog' $ "studyFiles: found " ++ show (length files) ++ " files in " ++ sdir
 
-    return $ (sdir, dirname, mtime, zip3 files suids snrs)
+    return $ (sdir, dirname, mtime, zip files suids)
 
 type StudyDir = FilePath
 type StudyDirName = String
 type StudyLastUpdate = ZonedTime
 
 type SeriesDesc = String
-type SeriesNr   = String
 
-type Series = [(FilePath, SeriesDesc, SeriesNr)]
+type Series = [(FilePath, SeriesDesc)]
 
 type DCMTKSeries = (StudyDir, StudyDirName, StudyLastUpdate, Series)
 
 _groupBySeries :: DCMTKSeries -> [DCMTKSeries]
 _groupBySeries (studyDir, studyDirName, studyLastUpdate, series) = map (\s -> (studyDir, studyDirName, studyLastUpdate, s)) series'
   where
-    f :: Series -> [Series]
-    f ds = groupBy (\(_, s1, n1) (_, s2, n2) -> s1 == s2 && n1 == n2) ((sortBy . comparing) (\(_, x, y) -> (x, y)) ds)
+    f ds = groupBy (\(_, s1) (_, s2) -> s1 == s2) ((sortBy . comparing) snd ds)
     series' = f series
 
 sink :: DC.Sink [(DicomFilePath, String)] IO ()
@@ -710,9 +707,9 @@ getBasicMetadata d = do
                       (Just patientID, Just studyDesc, Just seriesNr, Just seriesDesc) -> return (patientID, studyDesc, seriesNr, seriesDesc)
                       x -> throwM $ MetadataMissingException x
 
-getSeriesDir :: [(DicomFilePath, String, SeriesNr)] -> IO String
+getSeriesDir :: [(DicomFilePath, String)] -> IO String
 getSeriesDir [] = throwM $ EmptySeriesException "Got a series with no files in getSeriesDir."
-getSeriesDir ((d, _, _):_) = do
+getSeriesDir ((d, _):_) = do
     (patientID, studyDesc, seriesNr, seriesDesc) <- getBasicMetadata d
     return $ tidyName $ patientID </> studyDesc </> (seriesDesc ++ seriesNr)
 
@@ -724,16 +721,13 @@ fixWeirdChars '.' = '_'
 fixWeirdChars ':' = '_'
 fixWeirdChars c   = c
 
-genZipFileName :: [(DicomFilePath, String, String)] -> IO String
+genZipFileName :: [(DicomFilePath, String)] -> IO String
 genZipFileName [] = throwM $ EmptySeriesException "Got a series with no files in genZipFileName."
-genZipFileName ((d, _, _):_) = do
+genZipFileName ((d, _):_) = do
     (patientID, studyDesc, seriesNr, seriesDesc) <- getBasicMetadata d
     -- return $ (tidyName $ patientID ++ "_" ++ studyDesc ++ "_" ++ (seriesDesc ++ seriesNr)) ++ ".zip"
     -- return $ (tidyName $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc) ++ ".zip"
-    return $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_DICOM.zip"
-
-t0 :: (a, b, c) -> a
-t0 (x, _, _) = x
+    return $ patientID ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_DICOM.zip"
 
 processSeries :: String -> InstrumentConfig -> MVars -> DCMTKSeries -> MyTardisIO ()
 processSeries acidDir iconfig mvars dcmtkSeries = do
@@ -747,7 +741,7 @@ processSeries acidDir iconfig mvars dcmtkSeries = do
     -- h <- liftIO $ getStudyDirName $ map fst dfiles
     -- writeLog $ "Series has " ++ (show $ length dfiles) ++ " files with hashes: " ++ show h
 
-    let f = t0 <$> headMay dfiles
+    let f = fst <$> headMay dfiles
     m <- liftIO $ traverse readDicomMetadata f
 
     case m of
@@ -796,8 +790,8 @@ makeTemp desc = do
 finishSeries :: String -> MVars -> InstrumentConfig -> Resources -> DCMTKSeries -> ReaderT MyTardisConfig IO ()
 finishSeries acidDir mvars iconfig resources dcmtkSeries = do
     let (studyDir, studyDirName, studyLastUpdate, series) = dcmtkSeries
-        dfiles    = map t0 series
-        _dfiles   = series :: Series
+        dfiles    = map fst series
+        _dfiles   = series
 
         tempDir   = resourceTemp resources
         seriesDir = resourceSeriesDir resources
@@ -951,7 +945,7 @@ renameMinc dfiles (tempDir, _mincFiles) = do
     writeLog' $ "renameMinc: metadata: " ++ show m
 
     -- let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_" ++ f')
-    let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ "_" ++ seriesNr ++ "_" ++ f')
+    let renamer pid studyDesc seriesNr seriesDesc f = base </> (pid ++ "_" ++ studyDesc ++ "_" ++ seriesDesc ++ f')
            where base = dropFileName f
                  (originalMincFile:dirName:_) = reverse $ splitPath f
                  f' = drop (length dirName - 1) originalMincFile
