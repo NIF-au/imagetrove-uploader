@@ -16,6 +16,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:   Data.Dicom
                    , Network.ImageTrove.MainBruker
+                   , Network.ImageTrove.MainMicroPet
                    , Network.ImageTrove.MainDicom
                    , Network.ImageTrove.Utils
                    , Network.ImageTrove.Acid
@@ -161,6 +162,72 @@ executable imagetrove-dicom-uploader
 
 executable imagetrove-bruker-uploader
   main-is:           MainBruker.hs
+  ghc-options:       -threaded
+
+  build-depends:       base
+                     , wreq
+                     , time
+                     , convertible
+                     , unix
+                     , directory
+                     , Unixutils
+                     , process
+                     , filepath
+                     , temporary
+                     , transformers
+                     , mtl
+                     , aeson
+                     , lens-aeson
+                     , containers
+                     , text
+                     , bytestring
+                     , mime-types
+                     , http-client
+                     , lens
+                     , process-streaming < 0.7.0.0
+                     , pipes-bytestring
+                     , optparse-applicative
+                     , mtl
+                     , bytestring
+                     , cryptohash
+                     , parsec
+                     , filepath
+                     , directory
+                     , transformers
+                     , Unixutils
+                     , unix
+                     , process
+                     , temporary
+                     , containers
+                     , aeson
+                     , safe
+                     , bytestring
+                     , tagsoup
+                     , configurator
+                     , filemanip
+                     , cassava
+                     , vector
+                     , text
+                     , imagetrove-uploader
+                     , csv
+                     , email-validate
+                     , multimap
+                     , http-client-tls
+                     , connection
+                     , http-conduit
+                     , old-locale
+                     , acid-state
+                     , safecopy
+                     , parallel-io
+                     , stm
+                     , async
+                     , exceptions
+                     , conduit
+                     , random
+                     , split
+
+executable imagetrove-micropet-uploader
+  main-is:           MainMicroPet.hs
   ghc-options:       -threaded
 
   build-depends:       base
