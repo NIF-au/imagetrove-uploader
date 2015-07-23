@@ -54,7 +54,7 @@ _runShellCommand :: FilePath -> FilePath -> [String] -> IO String
 _runShellCommand cwd cmd args = do
     x <- runShellCommand cwd cmd args
     case x of
-        Left e    -> throwM $ ShellCommandException e
+        Left e    -> throwM $ ShellCommandException $ show (cwd, cmd, args, e)
         Right out -> return out
 
 runShellCommand :: FilePath -> FilePath -> [String] -> IO (Either String String)
